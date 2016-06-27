@@ -1,2 +1,3 @@
 # PDDLGen
-PDDL Generator from Ontology
+
+PDDL Generator from Intelligent Transport Systems Ontology

@@ -88,7 +88,7 @@ class PDDLConstants {
 
     public String removePrefixes(String input){
         if (prefix.isEmpty() && modelName.isEmpty()){
-            int hashIndex = input.indexOf("#");
+            int hashIndex = Math.max(input.lastIndexOf("#"), input.lastIndexOf("/"));
             return input.substring(hashIndex + 1, input.length());
         }
         else
@@ -233,8 +233,8 @@ class PDDLPredicateList{
 
 class PDDLModel {
     public String[] types;
-    public String[] predicateTypes;
-    public String[] functionTypes;
+    public java.util.Map<String, String> predicateNames = new java.util.HashMap<String, String>();
+    public java.util.Map<String, String> functionNames = new java.util.HashMap<String, String>();
     public String dataToReturn;
 }
 

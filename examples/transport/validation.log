@@ -1,0 +1,9 @@
+Checking plan: examples/transport/schedule.plan
+Plan executed successfully - checking goal
+Plan valid
+Final value: 38.021 
+
+Successful plans:
+Value: 38.021
+ examples/transport/schedule.plan 38.021 
+

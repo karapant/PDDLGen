@@ -1,8 +1,6 @@
 package asepaper.pddlgenerator;
 
-import asepaper.pddlgenerator.PDDLGenerator;
 import org.eclipse.jetty.server.Server;
-import org.eclipse.jetty.server.ServerConnector;
 
 public class PlannerCreator {
 
@@ -20,7 +18,7 @@ public class PlannerCreator {
             }
             else {
                 // start web server
-                Integer port = new Integer(argv[0]);
+                Integer port = Integer.valueOf(argv[0]);
                 Server server = new Server(port);
                 PDDLWebService standardHandler = new PDDLWebService();
                 server.setHandler(standardHandler);

@@ -6,6 +6,9 @@ import org.apache.jena.util.FileManager;
 import java.io.*;
 import java.util.Iterator;
 import java.util.Vector;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 /**
  * Created by eathkar on 03/05/16.
@@ -13,47 +16,26 @@ import java.util.Vector;
 public class PDDLGenerator {
 
     public String[] GeneratePlan(String domainFile, String problemFile, boolean writeToFile){
-        String[] array = new String[2];
-
         FileManager.get().addLocatorClassLoader(PDDLGenerator.class.getClassLoader());
-
-        Model model_domainFile = FileManager.get().loadModel(domainFile, null, "TURTLE");
-        Model model_problemFile = FileManager.get().loadModel(problemFile, null, "TURTLE");
-
-        StmtIterator model_file_statement_iterator = model_domainFile.listStatements();
-        StmtIterator problem_file_statement_iterator = model_problemFile.listStatements();
-
-        PDDLModel domainModel = new PDDLModel();
-
-        domainModel = processDomainFile(model_file_statement_iterator);
-        String problemFileContent = processProblemFile(problem_file_statement_iterator, domainModel);
-
-        if (writeToFile){
-            File file = new File (PDDLConstants.domainFileName);
-            try {
-                FileWriter fw = new FileWriter(file.getAbsoluteFile());
-                BufferedWriter bw = new BufferedWriter(fw);
-                bw.write(domainModel.dataToReturn);
-                bw.close();
+        Model domain = FileManager.get().loadModel(domainFile, null, "TURTLE");
+        Model problem = null;
+        try {
+            problem = FileManager.get().loadModel(problemFile, null, "TURTLE");
+            PDDLModel domainModel = processDomainFile(domain);
+            String problemContent = processProblemFile(problem, domainModel);
+            if (writeToFile) {
+                Files.write(Paths.get(PDDLConstants.domainFileName),
+                        domainModel.dataToReturn.getBytes(StandardCharsets.UTF_8));
+                Files.write(Paths.get(PDDLConstants.problemFileName),
+                        problemContent.getBytes(StandardCharsets.UTF_8));
             }
-            catch (Exception ex){
-                ex.printStackTrace();
-            }
-
-            File file2 = new File (PDDLConstants.problemFileName);
-            try {
-                FileWriter fw = new FileWriter(file2.getAbsoluteFile());
-                BufferedWriter bw = new BufferedWriter(fw);
-                bw.write(problemFileContent);
-                bw.close();
-            }
-            catch (Exception ex){
-                ex.printStackTrace();
-            }
+            return new String[] {domainModel.dataToReturn, problemContent};
+        } catch (IOException ex) {
+            throw new UncheckedIOException("Could not write PDDL output", ex);
+        } finally {
+            domain.close();
+            if (problem != null) problem.close();
         }
-        array[0] = domainModel.dataToReturn;
-        array[1] = problemFileContent;
-        return array;
     }
 
     private boolean containsType(String []typeArray, String typeToSearch){
@@ -69,30 +51,17 @@ public class PDDLGenerator {
         return containsType;
     }
 
-    private String processProblemFile(StmtIterator iter, PDDLModel model) {
+    private String processProblemFile(Model input, PDDLModel model) {
         String data = "";
         PDDLConstants constants = new PDDLConstants("", "");
         Vector<PDDLRaw> rawData = new Vector<PDDLRaw>();
-        Vector<PDDLObject> pddlObjects = new Vector<PDDLObject>();
 
         System.out.println("Processing problem file ...");
 
         // Note: Since predicates come at random, we will first save an unprocessed (raw) list of triplets, and
         // subsequently process them
 
-        while (iter.hasNext()) {
-            Statement stmt = iter.next();
-
-            Resource s = stmt.getSubject();
-            Resource p = stmt.getPredicate();
-            RDFNode o = stmt.getObject();
-
-            //System.out.println("Adding "+s.toString()+ " "+p.toString()+" "+o.toString());
-            rawData.add(new PDDLRaw(o.toString(), p.toString(), s.toString()));
-
-            //System.out.println();
-        }
-
+        rawData = OrderedStatements.read(input, true);
 
         // Lets first generate some constant names - header of our file
         String problemData = "(define (problem " +
@@ -101,10 +70,6 @@ public class PDDLGenerator {
                 constants.getDomain() +
                 ")";
 
-
-        // The data structure which will store the processed data
-
-        PDDLAssets assets = new PDDLAssets();
 
         // Now lets do the processing
         // First Pass: Scan and store primal primitives
@@ -193,28 +158,28 @@ public class PDDLGenerator {
                 }
             }
             else if (currentTriplet.predicate.endsWith(constants.getPredicateDefinition(PDDLConstants.predicateType.TYPE))
-                    && containsType(model.functionTypes, constants.removePrefixes(currentTriplet.subject))){
+                    && model.functionNames.containsKey(constants.removePrefixes(currentTriplet.subject))){
                 if (predicateIndex(predicates, constants.removePrefixes(currentTriplet.object)) < 0){
                     predicates.add(new PDDLPredicate(constants.removePrefixes(currentTriplet.object)));
-                    predicates.lastElement().type = constants.removePrefixes(currentTriplet.subject);
+                    predicates.lastElement().type = model.functionNames.get(constants.removePrefixes(currentTriplet.subject));
                 }
                 else {
                     predicates.elementAt(predicateIndex(predicates,
                             constants.removePrefixes(currentTriplet.object))).type =
-                            constants.removePrefixes(currentTriplet.subject);
+                            model.functionNames.get(constants.removePrefixes(currentTriplet.subject));
                 }
             }
             else if (currentTriplet.predicate.endsWith(constants.getPredicateDefinition(PDDLConstants.predicateType.TYPE))
-                    && containsType(model.predicateTypes, constants.removePrefixes(currentTriplet.subject))){
+                    && model.predicateNames.containsKey(constants.removePrefixes(currentTriplet.subject))){
                 if (predicateIndex(predicates, constants.removePrefixes(currentTriplet.object)) < 0){
                     predicates.add(new PDDLPredicate(constants.removePrefixes(currentTriplet.object)));
-                    predicates.lastElement().type = constants.removePrefixes(currentTriplet.subject);
+                    predicates.lastElement().type = model.predicateNames.get(constants.removePrefixes(currentTriplet.subject));
                     predicates.lastElement().isPred = true;
                 }
                 else {
                     predicates.elementAt(predicateIndex(predicates,
                             constants.removePrefixes(currentTriplet.object))).type =
-                            constants.removePrefixes(currentTriplet.subject);
+                            model.predicateNames.get(constants.removePrefixes(currentTriplet.subject));
                     predicates.elementAt(predicateIndex(predicates,
                             constants.removePrefixes(currentTriplet.object))).isPred = true;
                 }
@@ -323,6 +288,8 @@ public class PDDLGenerator {
 
         // state generation
 
+        actions.sort(java.util.Comparator.comparingInt(a ->
+                a.name.equals("init") ? 0 : a.name.equals("goal") ? 1 : 2));
         String stateData = "";
         for (int i = 0; i < actions.size(); i++){
             PDDLAction currentAction = actions.elementAt(i);
@@ -342,19 +309,8 @@ public class PDDLGenerator {
                     stateData += " ";
                 }
 
-                for (int j = currentPredicate.parameters.size() - 1; j >= 0; j--){
-                    stateData += currentPredicate.parameters.elementAt(j);
-                    if(j > 0)
-                        stateData += " ";
-                    else
-                        stateData += ")";
-
-                }
-                // This should take care of total-cost
-                if (!currentPredicate.hasOperator.isEmpty()
-                        && currentPredicate.parameters.size() == 0){
-                    stateData += ")";
-                }
+                stateData += String.join(" ", currentPredicate.parameters);
+                stateData += ")";
                 if(!currentPredicate.hasValue.isEmpty()){
                     stateData += " " + currentPredicate.hasValue;
                 }
@@ -442,17 +398,7 @@ public class PDDLGenerator {
         }
     }
 
-    private PDDLModel processDomainFile(StmtIterator iter){
-
-        PDDLModel modelToReturn = new PDDLModel();
-
-        String domainData = "";
-        String requirementData = "";
-        String typeData = "";
-        String predicateData = "";
-        String functionData = "";
-        String actionData = "";
-        String data = "";
+    private PDDLModel processDomainFile(Model input){
 
         PDDLConstants constants = new PDDLConstants("", "");
         Vector<PDDLRaw> rawData = new Vector<PDDLRaw>();
@@ -462,18 +408,7 @@ public class PDDLGenerator {
         // Note: Since predicates come at random, we will first save an unprocessed (raw) list of triplets, and
         // subsequently process them
 
-            while(iter.hasNext()){
-                Statement stmt = iter.next();
-
-                Resource s = stmt.getSubject();
-                Resource p = stmt.getPredicate();
-                RDFNode o = stmt.getObject();
-
-                //System.out.println("Adding "+s.toString()+ " "+p.toString()+" "+o.toString());
-                rawData.add(new PDDLRaw(s.toString(), p.toString(), o.toString()));
-
-                //System.out.println();
-            }
+            rawData = OrderedStatements.read(input, false);
 
             // The data structure which will store the processed data
 
@@ -622,538 +557,7 @@ public class PDDLGenerator {
                 }
             }
 
-            // Compilation of domain file
-
-            // a. Predicates
-            Iterator<PDDLPredicate> predicateIterator = assets.predicates.iterator();
-
-            predicateData = "\t(:predicates\n";
-
-            modelToReturn.predicateTypes = new String[assets.predicates.size()];
-            int index = 0;
-
-            // This list is used for elimination of duplicate predicates
-            Vector<String> duplicatePredicates = new Vector<String>();
-
-            while(predicateIterator.hasNext()){
-                PDDLPredicate currentPredicate = predicateIterator.next();
-
-                boolean duplicateExists = false;
-
-                if (!currentPredicate.realname.isEmpty()){
-                    if (isDuplicatePredicate(duplicatePredicates, currentPredicate.realname)){
-                        duplicateExists = true;
-                    }
-                }
-                else {
-                    if (isDuplicatePredicate(duplicatePredicates, constants.removePrefixes(currentPredicate.name))){
-                        duplicateExists = true;
-                    }
-                }
-
-
-                if (!currentPredicate.realname.isEmpty()) {
-                    if (!duplicateExists) predicateData += "\t\t(" + currentPredicate.realname;
-                    modelToReturn.predicateTypes[index] = currentPredicate.realname;
-                    duplicatePredicates.add(currentPredicate.realname);
-                }
-                else{
-                    if (!duplicateExists) predicateData += "\t\t(" + constants.removePrefixes(currentPredicate.name);
-                    modelToReturn.predicateTypes[index] = constants.removePrefixes(currentPredicate.name);
-                    duplicatePredicates.add(constants.removePrefixes(currentPredicate.name));
-                }
-
-                if (currentPredicate.parameters.size() > 0){
-                    if (!duplicateExists) predicateData += " ";
-                }
-
-                Iterator<String> currentPredicateParameterIterator = currentPredicate.parameters.iterator();
-                int counter = 0;
-
-                // ------
-                /*if (!currentPredicate.realname.isEmpty()) {
-                    System.out.println("Predicate: " + constants.removePrefixes(currentPredicate.realname));
-                }
-                else {
-                    System.out.println("Predicate: " + currentPredicate.name);
-                }*/
-
-                // ------
-
-                while (currentPredicateParameterIterator.hasNext()){
-                    String currentParameter = constants.removePrefixes(currentPredicateParameterIterator.next());
-                    //System.out.println("\tParameter: "+currentParameter);
-                    if (!duplicateExists) predicateData += "?"+(currentParameter.substring(0, 1)).toLowerCase()+counter+" - "+
-                            lookupParameterName(currentParameter, assets.parameters, constants);
-                    if (currentPredicateParameterIterator.hasNext())
-                        if (!duplicateExists) predicateData += " ";
-                }
-
-                if (!duplicateExists) predicateData += ")\n";
-                index++;
-            }
-            predicateData += "\t)\n";
-
-            // b. Functions
-            Vector<String> declaredFunctions = new Vector<String>();
-            Iterator<PDDLFunction> functionIterator = assets.functions.iterator();
-
-            functionData = "\t(:functions\n";
-            modelToReturn.functionTypes = new String[assets.functions.size()];
-            index = 0;
-            while(functionIterator.hasNext()) {
-                PDDLFunction currentFunction = functionIterator.next();
-                String functionName = "";
-
-                if (!currentFunction.realname.isEmpty()){
-                    functionName = currentFunction.realname;
-                    modelToReturn.functionTypes[index] = currentFunction.realname;
-                }
-                else {
-                    functionName = constants.removePrefixes(currentFunction.name);
-                    modelToReturn.functionTypes[index] = constants.removePrefixes(currentFunction.name);
-                }
-
-                if (!isFunctionDeclared(declaredFunctions, functionName)) {
-
-                    functionData += "\t\t(" + functionName;
-
-                    if (currentFunction.parameters.size() > 0) {
-                        functionData += " ";
-                    }
-
-                    Iterator<String> currentFunctionParameterIterator = currentFunction.parameters.iterator();
-                    int counter = 0;
-                    while (currentFunctionParameterIterator.hasNext()) {
-                        String currentParameter = constants.removePrefixes(currentFunctionParameterIterator.next());
-
-                        functionData += "?" + (currentParameter.substring(0, 1)).toLowerCase() + counter + " - " +
-                                lookupParameterName(currentParameter, assets.parameters, constants);
-                        if (currentFunctionParameterIterator.hasNext())
-                            functionData += " ";
-                    }
-
-                    functionData += ")\n";
-
-                    declaredFunctions.add(functionName);
-                }
-                index++;
-            }
-            functionData += "\t)\n";
-            Vector<PDDLInstance> instanceBank = new Vector<PDDLInstance>();
-            // c. Actions
-            Iterator<PDDLAction> actionIterator = assets.actions.iterator();
-
-            while(actionIterator.hasNext()){
-                PDDLAction currentAction = actionIterator.next();
-
-                actionData += "\t(:";
-
-                if (currentAction.isDurativeAction){
-                    actionData += "durative-";
-                }
-
-                actionData += "action "+constants.removePrefixes(currentAction.name)+"\n";
-                actionData += "\t\t:parameters (";
-
-                // Clear instance bank to prepare for storing instances of the current action ...
-                instanceBank.clear();
-
-                for (int i = 0; i < currentAction.parameters.size(); i++){
-                    PDDLParameter param = currentAction.parameters.elementAt(i);
-                    String currentParameter = constants.removePrefixes(param.name);
-                    actionData += "?" + (currentParameter.substring(0, 1)).toLowerCase() + i + " - " +
-                            lookupParameterName(currentParameter, assets.parameters, constants);
-                    if (i < currentAction.parameters.size() - 1)
-                        actionData += " ";
-                    instanceBank.add(new PDDLInstance("?" + (currentParameter.substring(0, 1)).toLowerCase() + i,
-                            lookupParameterName(currentParameter, assets.parameters, constants)));
-                }
-
-                actionData += ")\n\t\t:duration (= ?duration ";
-
-                // there is only 1 duration, perhaps we can reconsider vector in next release of generator
-                for (int i = 0; i < currentAction.duration.size(); i++){
-                    PDDLDuration duration = currentAction.duration.elementAt(i);
-                    actionData += lookupDurationParameter(duration.name, assets.durations, assets.functions, constants,
-                            assets.parameters, instanceBank);
-                }
-
-                actionData += ")\n\t\t:condition (";
-
-                if (currentAction.condition.elementAt(0).conditionalOperator.equalsIgnoreCase("AND")){
-                    actionData += "and";
-                }
-                else
-                    actionData += currentAction.condition.elementAt(0).conditionalOperator;
-
-
-                for (int i = 0; i < currentAction.condition.size(); i++){
-                    PDDLCondition currentCondition = currentAction.condition.elementAt(i);
-                    String conditionName = currentCondition.name;
-
-                    for (int k = 0; k < assets.conditions.size(); k++){
-                        if (conditionName.compareTo(assets.conditions.elementAt(k).name) == 0){
-                            // First lets get the conditional operator ....
-                            String conditionalOperator = assets.conditions.elementAt(k).conditionalOperator;
-                            if (conditionalOperator.equalsIgnoreCase("AND")) actionData += "and\n";
-                            else if (conditionalOperator.equalsIgnoreCase("OR")) actionData += "or\n";
-                            else actionData += conditionalOperator+"\n";
-                            // And now the conditions one by one
-                            actionData += getConditionalExpressions(
-                                    assets.conditions.elementAt(k).conditional_expressions,
-                                    assets.conditionalExpressions,
-                                    assets.predicates,
-                                    assets.functions,
-                                    assets.parameters,
-                                    instanceBank,
-                                    constants);
-                        }
-                    }
-
-                }
-
-                actionData += "\t\t:effect (";
-                PDDLEffect currentEffect = new PDDLEffect("");
-                for (int i = 0; i < assets.effects.size(); i++){
-                    if(assets.effects.elementAt(i).name.compareTo(currentAction.effect.elementAt(0).name)==0){
-                        currentEffect = assets.effects.elementAt(i);
-                       // System.out.println(currentEffect.conditionalOperator);
-
-                        String conditionalOperator;
-                        if(currentEffect.conditionalOperator.indexOf("^") > 0)
-                            conditionalOperator = currentEffect.conditionalOperator.substring(0,
-                                currentEffect.conditionalOperator.indexOf("^"));
-                        else
-                            conditionalOperator = currentEffect.conditionalOperator;
-                        if (conditionalOperator.equalsIgnoreCase("AND")){
-                            actionData += "and";
-                        }
-                        else
-                            actionData += conditionalOperator;
-                        actionData += "\n";
-
-                        actionData += getConditionalExpressions(
-                                currentEffect.conditional_expressions,
-                                assets.conditionalExpressions,
-                                assets.predicates,
-                                assets.functions,
-                                assets.parameters,
-                                instanceBank,
-                                constants);
-                    }
-                }
-                if (currentEffect.name.isEmpty()){
-                    System.out.println("Warning: no effect for action "+currentAction+". " +
-                            "Generated PDDL may have errors");
-                }
-
-            actionData += "\t)\n\n";
-
-            }
-
-            domainData = "(define (domain "+constants.getDomain()+")\n";
-
-            requirementData = "\n\t(:requirements ";
-            for (int i = 0; i < constants.getRequirements().length; i++){
-                requirementData += ":"+constants.getRequirements()[i];
-                if (i != (constants.getRequirements().length - 1)){
-                    requirementData += " ";
-                }
-            }
-            requirementData += ")\n\n";
-
-            typeData = "\t(:types ";
-
-            Vector<String> types = new Vector<String>();
-            for (int k = 0; k < assets.parameters.size(); k++){
-                String typename;
-                if (!assets.parameters.elementAt(k).realName.isEmpty()){
-                    typename = constants.removePrefixes(assets.parameters.elementAt(k).realName);
-                }
-                else
-                    typename = constants.removePrefixes(assets.parameters.elementAt(k).name);
-
-                Iterator<String> stringIterator = types.iterator();
-                boolean hasType = false;
-                while (stringIterator.hasNext()){
-                    if (stringIterator.next().compareTo(typename) == 0){
-                        hasType = true;
-                        break;
-                    }
-                }
-                if (!hasType){
-                    types.add(typename);
-                }
-            }
-        modelToReturn.types = new String[types.size()];
-        Iterator<String> stringIterator = types.iterator();
-        int counter = 0;
-            while (stringIterator.hasNext()){
-                String currentType = stringIterator.next();
-                typeData += currentType;
-                modelToReturn.types[counter] = currentType;
-                if (stringIterator.hasNext())
-                    typeData += " ";
-                counter++;
-            }
-            typeData += ")\n\n";
-
-
-        data = domainData + requirementData + typeData + predicateData + functionData + actionData + ")";
-        modelToReturn.dataToReturn = data;
-
-        return modelToReturn;
-    }
-
-    private boolean isDuplicatePredicate(Vector<String> predlist, String pred){
-        Iterator<String> iter = predlist.iterator();
-        while (iter.hasNext()){
-            String currentPred = iter.next();
-            if (currentPred.compareTo(pred) == 0){
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private String getConditionalExpressions (Vector<PDDLConditionalExpression> expressionsToGet,
-                                              Vector<PDDLConditionalExpression> expressionRepo,
-                                              Vector<PDDLPredicate> predicateRepo,
-                                              Vector<PDDLFunction> functionRepo,
-                                              Vector<PDDLParameter> parameters,
-                                              Vector<PDDLInstance> instanceBank,
-                                              PDDLConstants constants){
-        String data = "";
-
-        for (int k = 0; k < expressionsToGet.size(); k++){
-            //System.out.println(expressionsToGet.elementAt(k).name);
-            PDDLConditionalExpression currentExpressionInRepo = expressionsToGet.elementAt(k);
-
-            for (int i = 0; i < expressionRepo.size(); i++){
-
-                if (currentExpressionInRepo.name.compareTo(expressionRepo.elementAt(i).name) == 0) {
-                    data += "\t\t\t(" + expressionRepo.elementAt(i).timing + " (";
-                    boolean hasNegation = false;
-                    boolean hasFunctionArg = false;
-                    if (expressionRepo.elementAt(i).hasNegation) {
-                        data += "not (";
-                        hasNegation = true;
-                    }
-                    /*if (!expressionRepo.elementAt(i).operator.isEmpty()){
-                        data += expressionRepo.elementAt(i).operator + " (";
-                        hasOperator = true;
-                    }*/
-                    Iterator<String> parameterList = expressionRepo.elementAt(i).parameters.iterator();
-
-                    // ------ Parameter search -------
-
-                    while (parameterList.hasNext()){
-                        String currentParameter = parameterList.next();
-                        Iterator<PDDLPredicate> pddlParameterIterator = predicateRepo.iterator();
-
-                        // some conditions include predicates, search predicates first
-                        boolean searchSucceeded = false;
-                        while(pddlParameterIterator.hasNext()){
-                            PDDLPredicate predicateInRepo = pddlParameterIterator.next();
-                            if (currentParameter.compareTo(predicateInRepo.name) == 0) {
-
-                                String name = "";
-                                if (!predicateInRepo.realname.isEmpty()) {
-                                    name = constants.removePrefixes(predicateInRepo.realname);
-                                    data += name + " ";
-                                } else {
-                                    name = constants.removePrefixes(predicateInRepo.name);
-                                    data +=  name + " ";
-                                }
-                                // Parameter resolution from instance bank
-                                for (int a = 0; a < predicateInRepo.parameters.size(); a++) {
-                                    String currentPredicate = constants.removePrefixes(predicateInRepo.parameters.elementAt(a));
-                                    String instancePrefixName = "?" + (currentPredicate.substring(0, 1)).toLowerCase();
-                                    for (int d = 0; d < instanceBank.size(); d++){
-                                        PDDLInstance currentInstance = instanceBank.elementAt(d);
-                                        if (currentInstance.instanceName.startsWith(instancePrefixName)){
-                                            instancePrefixName = currentInstance.instanceName;
-                                            break;
-                                        }
-                                    }
-                                    data += instancePrefixName;
-
-                                    if (a < predicateInRepo.parameters.size() -1)
-                                        data += " ";
-                                }
-                                data += ")";
-                                searchSucceeded = true;
-                            }
-                        }
-                        // Lets have a look at functions as well in case search did not succeed in predicates ...
-                        if (!searchSucceeded){
-                            Iterator<PDDLFunction> functionIterator = functionRepo.iterator();
-                            while (functionIterator.hasNext()){
-                                PDDLFunction currentFunction = functionIterator.next();
-
-                                boolean functionHasOperator = false;
-                                boolean functionIsTotalCost = false;
-
-                                if(currentParameter.compareTo(currentFunction.name) == 0) {
-                                    //System.out.println(currentFunction.name);
-                                    if (!currentFunction.realname.isEmpty()) {
-                                        if (currentFunction.operator.isEmpty()) {
-                                            data += constants.removePrefixes(currentFunction.realname);
-                                            data += " ";
-                                        } else {
-                                            data += currentFunction.operator + " (";
-                                            data += constants.removePrefixes(currentFunction.realname);
-                                            functionHasOperator = true;
-                                        }
-                                    } else {
-                                        if (currentFunction.operator.isEmpty()) {
-                                            data += constants.removePrefixes(currentFunction.name);
-                                            data += " ";
-                                        } else {
-                                            data += currentFunction.operator + " (";
-                                            data += constants.removePrefixes(currentFunction.name);
-                                            functionHasOperator = true;
-                                        }
-                                    }
-
-                                    if (functionHasOperator && currentFunction.parameters.size() > 0) data += " ";
-
-                                    // Parameter resolution from instance bank
-                                    for (int a = 0; a < currentFunction.parameters.size(); a++) {
-                                        String currentPredicate = constants.removePrefixes(currentFunction.parameters.elementAt(a));
-                                        String instancePrefixName = "?" + (currentPredicate.substring(0, 1)).toLowerCase();
-                                        for (int d = 0; d < instanceBank.size(); d++) {
-                                            PDDLInstance currentInstance = instanceBank.elementAt(d);
-                                            if (currentInstance.instanceName.startsWith(instancePrefixName)) {
-                                                instancePrefixName = currentInstance.instanceName;
-                                                break;
-                                            }
-                                        }
-                                        data += instancePrefixName;
-                                        if (a < currentFunction.parameters.size() - 1)
-                                            data += " ";
-                                    }
-                                    data += ")";
-
-                                    // for functions, some special handling is required in case there is value
-
-                                    if (!currentFunction.value.isEmpty() && currentFunction.value.indexOf("^") > 0)
-                                        data += " " + currentFunction.value.substring(0,
-                                                currentFunction.value.indexOf("^"));
-                                    /*else {
-                                        data += " " + currentFunction.value;
-                                    }*/
-                                    if (functionHasOperator && !currentFunction.value.isEmpty())
-                                        data += ")";
-                                    else if (functionHasOperator && currentFunction.value.isEmpty()){
-                                        hasFunctionArg = true;
-                                        data += " (";
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // ---- end parameter search ------
-
-                    if(hasNegation) data += ")";
-                    if(hasFunctionArg) data += ")";
-                    data += ")";
-
-                }
-            }
-
-
-            data += "\n";
-        }
-        data += "\t\t)\n";
-
-        return data;
-    }
-
-    private String lookupDurationParameter (String durationName, Vector<PDDLDuration> duration,
-                                            Vector<PDDLFunction> functions, PDDLConstants constants,
-                                            Vector<PDDLParameter> parameters, Vector<PDDLInstance> instanceBank){
-
-        Iterator<PDDLDuration> durationIterator = duration.iterator();
-        while (durationIterator.hasNext()){
-            PDDLDuration currentDuration = durationIterator.next();
-            if (currentDuration.name.compareTo(durationName) == 0) {
-                if (currentDuration.parameters.elementAt(0).contains("XMLSchema#integer") ||
-                        currentDuration.parameters.elementAt(0).contains("XMLSchema#nonNegativeInteger") ||
-                        currentDuration.parameters.elementAt(0).contains("XMLSchema#positiveInteger")) {
-                    return currentDuration.parameters.elementAt(0).substring(0,
-                            currentDuration.parameters.elementAt(0).indexOf("^"));
-                } else {
-                    String functionName = currentDuration.parameters.elementAt(0);
-                    for (int i = 0; i < functions.size(); i++) {
-                        PDDLFunction currentFunction = functions.elementAt(i);
-                        if (currentFunction.name.compareTo(functionName) == 0){
-                            Iterator<String> currentFunctionParameterIterator = currentFunction.parameters.iterator();
-                            int counter = 0;
-                            String functionData = "("+constants.removePrefixes(functionName)+" ";
-                            while (currentFunctionParameterIterator.hasNext()) {
-
-                                String currentParameter = currentFunctionParameterIterator.next();
-                                if (!(currentParameter.compareTo("total-cost") == 0)) {
-                                    currentParameter = constants.removePrefixes(
-                                            currentParameter);
-
-                                    // look into instance bank to find the name
-                                    String instancePrefixName = "?" + (currentParameter.substring(0, 1)).toLowerCase();
-                                    for (int k = 0; k < instanceBank.size(); k++) {
-                                        PDDLInstance currentInstance = instanceBank.elementAt(k);
-                                        if (currentInstance.instanceName.contains(instancePrefixName) &&
-                                                currentInstance.instanceType.compareTo(
-                                                        lookupParameterName(currentParameter, parameters, constants)) == 0) {
-                                            // found instance in instance bank
-                                            functionData += currentInstance.instanceName;
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                if (currentFunctionParameterIterator.hasNext())
-                                    functionData += " ";
-                            }
-                            functionData += ")";
-                            return functionData;
-                        }
-                    }
-                }
-            }
-        }
-
-        return "";
-    }
-
-    private boolean isFunctionDeclared (Vector<String> declaredFunctions, String fname){
-        Iterator<String> declaredFunctionsIterator = declaredFunctions.iterator();
-        while(declaredFunctionsIterator.hasNext()){
-            String currentFunctionName = declaredFunctionsIterator.next();
-            if (currentFunctionName.compareTo(fname) == 0){
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private String lookupParameterName(String name, Vector<PDDLParameter> pddlParameters, PDDLConstants util){
-
-        Iterator<PDDLParameter> pddlParameterIterator = pddlParameters.iterator();
-        while(pddlParameterIterator.hasNext()){
-            PDDLParameter currentParameter = pddlParameterIterator.next();
-
-            if (util.removePrefixes(currentParameter.name).compareTo(name) == 0){
-                if (!currentParameter.realName.isEmpty()){
-                    return currentParameter.realName;
-                }
-                else
-                    return util.removePrefixes(currentParameter.name);
-            }
-
-        }
-        return "";
+            return new DomainRenderer(assets).render();
     }
 
     private SubjectType getSubjectType(

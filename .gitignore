@@ -1,0 +1,25 @@
+# Maven build output, including generated schedules and run logs
+/target/
+
+# Default CLI output; keep the checked-in examples visible to Git
+/domain-file.pddl
+/problem-file.pddl
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Local Java IDE metadata
+/.idea/
+*.iml
+/.classpath
+/.project
+/.settings/
+
+# OS metadata and JVM crash output
+.DS_Store
+Thumbs.db
+hs_err_pid*.log
+replay_pid*.log
+/core
+/core.*

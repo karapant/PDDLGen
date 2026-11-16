@@ -53,8 +53,8 @@ public class PDDLWebService  extends AbstractHandler {
                 String data[] = gen.GeneratePlan(domainModel, objectModel, false);
 
                 JSONObject returnObject = new JSONObject();
-                returnObject.append("problemFile", data[0]);
-                returnObject.append("domainFile", data[1]);
+                returnObject.put("domainFile", data[0]);
+                returnObject.put("problemFile", data[1]);
 
                 constructResponse(
                         request,
@@ -88,7 +88,9 @@ public class PDDLWebService  extends AbstractHandler {
     private void constructResponse(Request request, HttpServletResponse response,
                                    int responseType, String message) throws IOException{
         request.setHandled(true);
-        response.setContentType("application/text");
+        response.setCharacterEncoding("UTF-8");
+        response.setContentType(responseType == HttpServletResponse.SC_OK
+                ? "application/json" : "text/plain");
         response.setStatus(responseType);
         response.setHeader("Access-Control-Allow-Origin", "*");
         response.setHeader("Access-Control-Allow-Methods", "POST");
